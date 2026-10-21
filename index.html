@@ -9,6 +9,12 @@
 </style>
 </head>
 <body>
+<section id="authPanel" style="max-width:520px;margin:28px auto;padding:20px;background:#fff;border:1px solid #e0e8ef;border-radius:18px">
+<h1 style="font-size:24px;margin:0 0 8px">LittleSteps Login</h1><p style="color:#647789;font-size:14px;line-height:1.5">Apne account se login karein. Isi account se doosre phone par bhi data sync hoga.</p>
+<label>Email address</label><input id="authEmail" type="email" autocomplete="username" placeholder="Aapka email">
+<label>Password</label><input id="authPassword" type="password" autocomplete="current-password" placeholder="Password (kam se kam 6 characters)">
+<button class="primary" onclick="loginAccount()">Login</button><button class="secondary" style="width:100%;margin-top:10px" onclick="createAccount()">Naya account banayein</button><button class="secondary" style="width:100%;margin-top:10px" onclick="resetPassword()">Password bhool gaye?</button><p id="authMsg" style="font-size:13px;color:#9b4a35;line-height:1.5"></p><p style="font-size:12px;color:#647789">Password kisi ke saath share na karein. Sync ke liye internet zaroori hai.</p></section>
+<div id="appShell" style="display:none">
 <header><div class="row"><div><h1>LittleSteps</h1><p style="margin-bottom:0">Baby feeding & growth tracker</p></div><span style="font-size:34px">🍼</span></div><div class="switch" style="margin-top:14px"><button id="baby1" class="active" onclick="setBaby(1)">👶 Twin A</button><button id="baby2" onclick="setBaby(2)">👶 Twin B</button></div></header>
 <main>
 <section id="home" class="page active">
@@ -34,10 +40,29 @@
 </section>
 </main>
 <nav class="bottom"><button class="active" data-page="home" onclick="showPage('home')"><span>⌂</span>Home</button><button data-page="feeding" onclick="showPage('feeding')"><span>🍼</span>Feeding</button><button data-page="growth" onclick="showPage('growth')"><span>⚖</span>Growth</button><button data-page="reports" onclick="showPage('reports')"><span>▥</span>Reports</button><button data-page="backup" onclick="showPage('backup')"><span>☷</span>Backup</button></nav>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+
 <script>
-const KEY='littlesteps-ready-v1';let data={feeds:[],weights:[],names:{1:'Twin A',2:'Twin B'}};let baby=1;let timer=null;
-function load(){try{const x=JSON.parse(localStorage.getItem(KEY)||'{}');data={feeds:Array.isArray(x.feeds)?x.feeds:[],weights:Array.isArray(x.weights)?x.weights:[],names:x.names||{1:'Twin A',2:'Twin B'}}}catch(e){};document.getElementById('name1').value=data.names[1]||'Twin A';document.getElementById('name2').value=data.names[2]||'Twin B';}
-function save(){localStorage.setItem(KEY,JSON.stringify(data));render()}
+const KEY='littlesteps-ready-v1';
+const firebaseConfig={apiKey:'AIzaSyBN_0gOQPRYwPOUTFHuwscPaENa9bKuW8A',authDomain:'littlestepsbabytracker.firebaseapp.com',projectId:'littlestepsbabytracker',storageBucket:'littlestepsbabytracker.firebasestorage.app',messagingSenderId:'281704264415',appId:'1:281704264415:web:6cbcefc765a7d70d8b6f6a'};
+firebase.initializeApp(firebaseConfig);const auth=firebase.auth(),db=firebase.firestore();let currentUser=null,cloudReady=false,cloudTimer=null,cloudUnsubscribe=null;
+let data={feeds:[],weights:[],names:{1:'Twin A',2:'Twin B'}};let baby=1;let timer=null;
+function loadLocal(){try{const x=JSON.parse(localStorage.getItem(KEY)||'{}');data={feeds:Array.isArray(x.feeds)?x.feeds:[],weights:Array.isArray(x.weights)?x.weights:[],names:x.names||{1:'Twin A',2:'Twin B'}}}catch(e){}}
+function saveLocal(){localStorage.setItem(KEY,JSON.stringify(data))}
+function save(){saveLocal();render();if(currentUser&&cloudReady)scheduleCloudSave()}
+function authMessage(s,good=false){const e=document.getElementById('authMsg');e.textContent=s;e.style.color=good?'#246c45':'#9b4a35'}
+function authError(e){const m={'auth/email-already-in-use':'Is email ka account pehle se hai. Login karein.','auth/invalid-email':'Email address sahi nahi hai.','auth/weak-password':'Password kam se kam 6 characters ka hona chahiye.','auth/invalid-credential':'Email ya password galat hai.','auth/user-not-found':'Account nahi mila. Email check karein ya naya account banayein.','auth/network-request-failed':'Internet connection check karein.'};return m[e.code]||('Error: '+(e.message||e.code))}
+function credentials(){return {email:document.getElementById('authEmail').value.trim(),password:document.getElementById('authPassword').value}}
+async function loginAccount(){const c=credentials();if(!c.email||!c.password)return authMessage('Email aur password bharein.');try{await auth.signInWithEmailAndPassword(c.email,c.password)}catch(e){authMessage(authError(e))}}
+async function createAccount(){const c=credentials();if(!c.email||!c.password)return authMessage('Email aur password bharein.');if(c.password.length<6)return authMessage('Password kam se kam 6 characters ka rakhein.');try{await auth.createUserWithEmailAndPassword(c.email,c.password)}catch(e){authMessage(authError(e))}}
+async function resetPassword(){const email=document.getElementById('authEmail').value.trim();if(!email)return authMessage('Pehle email address bharein.');try{await auth.sendPasswordResetEmail(email);authMessage('Password reset email bhej diya gaya. Inbox/spam check karein.',true)}catch(e){authMessage(authError(e))}}
+function logoutAccount(){if(cloudUnsubscribe){cloudUnsubscribe();cloudUnsubscribe=null}auth.signOut()}
+function authView(yes){document.getElementById('authPanel').style.display=yes?'none':'block';document.getElementById('appShell').style.display=yes?'block':'none'}
+function cloudStatus(s){let e=document.getElementById('cloudStatus');if(e)e.textContent=s}
+function scheduleCloudSave(){if(cloudTimer)clearTimeout(cloudTimer);cloudTimer=setTimeout(async()=>{try{await db.collection('users').doc(currentUser.uid).collection('appdata').doc('main').set({feeds:data.feeds,weights:data.weights,names:data.names,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});cloudStatus('Cloud sync: saved')}catch(e){cloudStatus('Cloud sync failed: '+e.message)}},600)}
+async function signedIn(user){currentUser=user;cloudReady=false;authView(true);const head=document.querySelector('#appShell header');if(head&&!document.getElementById('cloudStatus')){const row=document.createElement('div');row.className='row';row.style.cssText='margin-top:10px;font-size:12px';row.innerHTML='<span id="cloudStatus">Cloud sync loading…</span><button class="secondary" style="padding:6px 10px;font-size:12px" onclick="logoutAccount()">Logout</button>';head.appendChild(row)}loadLocal();try{const ref=db.collection('users').doc(user.uid).collection('appdata').doc('main');const snap=await ref.get();if(snap.exists){const x=snap.data();data={feeds:Array.isArray(x.feeds)?x.feeds:[],weights:Array.isArray(x.weights)?x.weights:[],names:x.names||{1:'Twin A',2:'Twin B'}};saveLocal();cloudStatus('Cloud sync: connected')}else{await ref.set({feeds:data.feeds,weights:data.weights,names:data.names,updatedAt:firebase.firestore.FieldValue.serverTimestamp()});cloudStatus('Cloud sync: connected')}document.getElementById('name1').value=data.names[1]||'Twin A';document.getElementById('name2').value=data.names[2]||'Twin B';cloudReady=true;render();if(cloudUnsubscribe)cloudUnsubscribe();cloudUnsubscribe=ref.onSnapshot(s=>{if(!s.exists||!currentUser)return;const x=s.data();data={feeds:Array.isArray(x.feeds)?x.feeds:[],weights:Array.isArray(x.weights)?x.weights:[],names:x.names||{1:'Twin A',2:'Twin B'}};saveLocal();document.getElementById('name1').value=data.names[1]||'Twin A';document.getElementById('name2').value=data.names[2]||'Twin B';render();cloudStatus('Cloud sync: connected')},e=>cloudStatus('Cloud sync failed: '+e.message))}catch(e){cloudStatus('Cloud sync failed');authMessage('Firestore Rules ya connection mein dikkat hai: '+e.message)}}
 function setBaby(n){baby=n;document.getElementById('baby1').classList.toggle('active',n===1);document.getElementById('baby2').classList.toggle('active',n===2);render()}
 function showPage(p){document.querySelectorAll('.page').forEach(x=>x.classList.toggle('active',x.id===p));document.querySelectorAll('.bottom button').forEach(x=>x.classList.toggle('active',x.dataset.page===p));if(p==='growth')drawChart();render();window.scrollTo({top:0,behavior:'smooth'})}
 function localDateValue(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,16)}
@@ -65,6 +90,7 @@ async function importCSV(){const f=document.getElementById('restoreFile').files[
 function clearData(){if(!confirm('Kya aap dono babies ka saara feed aur weight data permanently delete karna chahte hain? Pehle CSV backup lein.'))return;data.feeds=[];data.weights=[];save();msg('backupMsg','Data delete ho gaya.')}
 async function enableNotifications(){if(!('Notification'in window)){msg('notifyStatus','Is browser mein notifications supported nahi hain. Android browser ya installed PWA use karein.');return}const p=await Notification.requestPermission();msg('notifyStatus',p==='granted'?'Notifications permission mil gayi. Feed save karne ke baad reminder schedule hoga.': 'Notifications allow nahi hui. Browser settings mein permission check karein.')}
 function scheduleBrowserReminder(){if(!document.getElementById('reminderEnabled').checked)return;if(!('Notification'in window)||Notification.permission!=='granted'){return}if(timer)clearTimeout(timer);const mins=Number(document.getElementById('interval').value)||180;timer=setTimeout(()=>{try{new Notification('LittleSteps reminder',{body:`${data.names[baby]||'Baby'}: feeding plan check karein aur zaroorat ho to next feed log karein.`})}catch(e){}},mins*60000);msg('notifyStatus',`Reminder is browser session ke liye ${mins} minutes mein set hua.`)}
-if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(()=>{});load();render();
+if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./sw.js').catch(()=>{});loadLocal();render();authView(false);auth.onAuthStateChanged(user=>{if(user)signedIn(user);else{if(cloudUnsubscribe){cloudUnsubscribe();cloudUnsubscribe=null}currentUser=null;cloudReady=false;authView(false)}});
 </script>
+</div>
 </body></html>
